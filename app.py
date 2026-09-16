@@ -1,11 +1,13 @@
-﻿import streamlit as st
+﻿import os
+import streamlit as st
 import pandas as pd
+from datetime import datetime
 from core_ai import run_pipeline
-from database import init_db, add_user, verify_user, save_scan_result, get_user_scans
+from database import init_db, add_user, verify_user, save_scan_result, get_user_scans, get_all_users, get_all_scans_admin
 
-# ==============================
-# CẤU HÌNH TRANG & CƠ SỞ DỮ LIỆU
-# ==============================
+AUDIO_DIR = "saved_audio"
+os.makedirs(AUDIO_DIR, exist_ok=True)
+
 st.set_page_config(
     page_title="HỆ THỐNG GIÁM ĐỊNH & ĐIỀU TRA CUỘC GỌI DEEPFAKE",
     page_icon="🛡️",
@@ -20,7 +22,6 @@ try:
 except FileNotFoundError:
     pass
 
-# Quản lý phiên làm việc (Session State)
 if "lang" not in st.session_state:
     st.session_state["lang"] = "Tiếng Việt"
 if "logged_in" not in st.session_state:
@@ -30,12 +31,16 @@ if "username" not in st.session_state:
 if "consent_given" not in st.session_state:
     st.session_state["consent_given"] = False
 
+ADMIN_USERS = ["duy", "admin"]
+is_admin = st.session_state["logged_in"] and (st.session_state["username"] in ADMIN_USERS)
+
 TEXTS = {
     "Tiếng Việt": {
         "title": "HỆ THỐNG GIÁM ĐỊNH & ĐIỀU TRA CUỘC GỌI DEEPFAKE",
         "menu_home": "Trang chủ",
         "menu_guide": "Hướng dẫn",
         "menu_auth": "Đăng nhập / Đăng ký",
+        "menu_admin": "🛡️ Quản trị hệ thống",
         "input_section": "Nạp dữ liệu âm thanh phân tích",
         "method_label": "Phương thức nạp:",
         "method_file": "Tải tệp âm thanh (.wav, .mp3)",
@@ -67,13 +72,14 @@ TEXTS = {
         "login_btn": "Xác nhận đăng nhập",
         "reg_btn": "Đăng ký tài khoản",
         "logout_btn": "Đăng xuất tài khoản",
-        "history_title": "Lịch sử các phiên giám định của tài khoản"
+        "history_title": "Lịch sử giám định & Nghe lại âm thanh"
     },
     "English": {
         "title": "DEEPFAKE CALL INVESTIGATION & FORENSIC SYSTEM",
         "menu_home": "Home",
         "menu_guide": "Guide",
         "menu_auth": "Login / Register",
+        "menu_admin": "🛡️ Admin Console",
         "input_section": "Audio Data Input for Analysis",
         "method_label": "Input Method:",
         "method_file": "Upload Audio File (.wav, .mp3)",
@@ -105,17 +111,16 @@ TEXTS = {
         "login_btn": "Confirm Login",
         "reg_btn": "Register Account",
         "logout_btn": "Log out",
-        "history_title": "Account Forensic Session History"
+        "history_title": "Forensic Session History & Playback"
     }
 }
 
 t = TEXTS[st.session_state["lang"]]
 
-# Quy chế bảo mật
 if not st.session_state["consent_given"]:
     @st.dialog("Quy chế bảo mật hệ thống / System Security Policy")
     def consent_dialog():
-        st.write("Chào mừng bạn đến với Hệ thống Giám định & Điều tra cuộc gọi Deepfake. Dữ liệu âm thanh của bạn được xử lý bảo mật và tuân thủ các quy tắc đạo đức AI.")
+        st.write("Chào mừng bạn đến với Hệ thống Giám định & Điều tra cuộc gọi Deepfake. Dữ liệu âm thanh của bạn được lưu trữ bảo mật cục bộ phục vụ công tác điều tra.")
         col_c1, col_c2 = st.columns(2)
         with col_c1:
             if st.button("Từ chối / Decline", use_container_width=True):
@@ -126,9 +131,6 @@ if not st.session_state["consent_given"]:
                 st.rerun()
     consent_dialog()
 
-# ==============================
-# 1. BANNER PHÍA TRÊN CÙNG
-# ==============================
 st.markdown(f"""
     <div class="portal-header">
         <h1 class="portal-header-title">{t['title']}</h1>
@@ -137,17 +139,15 @@ st.markdown(f"""
 
 st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
 
-# ==============================
-# 2. MENU & NGÔN NGỮ CĂN GIỮA
-# ==============================
 col_menu, col_lang = st.columns([5, 1], gap="small")
 
+# Danh sach menu tabs dong tuy theo quyen han Admin
+tab_labels = [t["menu_home"], t["menu_guide"], t["menu_auth"]]
+if is_admin:
+    tab_labels.append(t["menu_admin"])
+
 with col_menu:
-    menu_selection = st.tabs([
-        t["menu_home"],
-        t["menu_guide"],
-        t["menu_auth"]
-    ])
+    menu_selection = st.tabs(tab_labels)
 
 with col_lang:
     selected_lang = st.selectbox(
@@ -159,10 +159,6 @@ with col_lang:
     if selected_lang != st.session_state["lang"]:
         st.session_state["lang"] = selected_lang
         st.rerun()
-
-# ==============================
-# 3. NỘI DUNG CHI TIẾT
-# ==============================
 
 # --- TAB 1: TRANG CHỦ ---
 with menu_selection[0]:
@@ -202,22 +198,25 @@ with menu_selection[0]:
         btn_run = False
         st.info("Vui lòng nạp tệp âm thanh hoặc ghi âm ở cột bên trái để tiếp tục." if st.session_state["lang"] == "Tiếng Việt" else "Please upload or record an audio file on the left to proceed.")
 
-    # --- KẾT QUẢ PHÂN TÍCH CHUYÊN SÂU ---
     if btn_run and uploaded_file is not None:
         st.markdown(f"<h2 style='text-align: center; color: #1a365d; margin-top: 30px;'>{t['result_title']}</h2>", unsafe_allow_html=True)
         
+        current_user = st.session_state["username"] if st.session_state["logged_in"] else "Guest"
+        time_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_filename = f"{current_user}_{time_tag}_{file_label}"
+        saved_file_path = os.path.join(AUDIO_DIR, safe_filename)
+        
+        with open(saved_file_path, "wb") as f_out:
+            f_out.write(uploaded_file.getbuffer())
+
         with st.spinner(t["info_wait"]):
-            # Truyền chính xác cờ is_mic để kích hoạt bộ bù suy hao micro
             result = run_pipeline(uploaded_file, is_mic=is_mic)
 
-        # Lưu log gắn với tài khoản đang đăng nhập hoặc Guest
-        current_user = st.session_state["username"] if st.session_state["logged_in"] else "Guest"
-        save_scan_result(current_user, file_label, result["score"], result["threat"], call_source, suspect_type)
+        save_scan_result(current_user, file_label, result["score"], result["threat"], call_source, suspect_type, audio_path=saved_file_path)
 
         score = result["score"]
         threat = result["threat"]
 
-        # Bảng thông tin phiên căn giữa
         st.markdown(f"<h3 style='text-align: center;'>{t['sys_info_title']}</h3>", unsafe_allow_html=True)
         df_info = pd.DataFrame({
             "Thông số hệ thống" if st.session_state["lang"] == "Tiếng Việt" else "System Parameter": [
@@ -233,7 +232,6 @@ with menu_selection[0]:
         st.dataframe(df_info, use_container_width=True, hide_index=True)
         st.write("")
 
-        # BỐ CỤC CHÍNH: Trái (Chỉ số rủi ro) | Phải (Cảnh báo -> Bản ghi hội thoại -> Dấu hiệu thao túng)
         col_res_left, col_res_right = st.columns([1, 2], gap="large")
 
         with col_res_left:
@@ -265,7 +263,6 @@ with menu_selection[0]:
 
         st.write("")
         
-        # Biểu đồ âm học và XAI
         col_sub1, col_sub2 = st.columns(2, gap="large")
         with col_sub1:
             st.markdown(f"<h3 style='text-align: center;'>{t['tab_spec']}</h3>", unsafe_allow_html=True)
@@ -287,9 +284,9 @@ with menu_selection[1]:
         3. **Đọc kết luận pháp y:** Xem xét chỉ số rủi ro Deepfake, đối chiếu mốc thời gian vi phạm kịch bản lừa đảo và biểu đồ XAI giải thích quyết định.
         """)
     with g_tab2:
-        st.code("[ Nạp tệp / Micro ] ──> [ Chuẩn hóa 16kHz + VAD ] ──> [ Random Forest + Faster-Whisper ] ──> [ Kết quả & XAI ]", language="text")
+        st.code("[ Nạp tệp / Micro ] ──> [ Chuẩn hóa 16kHz + VAD ] ──> [ Random Forest + Faster-Whisper ] ──> [ Lưu trữ & Kết quả ]", language="text")
 
-# --- TAB 3: ĐĂNG NHẬP / ĐĂNG KÝ & LỊCH SỬ ---
+# --- TAB 3: ĐĂNG NHẬP / ĐĂNG KÝ & LỊCH SỬ RIÊNG ---
 with menu_selection[2]:
     st.markdown(f"<h2 style='text-align: center;'>{t['auth_title']}</h2>", unsafe_allow_html=True)
     st.markdown("---")
@@ -320,7 +317,7 @@ with menu_selection[2]:
                     else:
                         st.error("Tên tài khoản đã tồn tại!" if st.session_state["lang"] == "Tiếng Việt" else "Username already exists!")
     else:
-        st.markdown(f"<h3 style='text-align: center;'>Xin chào / Hello, **{st.session_state['username']}**</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='text-align: center;'>Xin chào / Hello, **{st.session_state['username']}** {'👑 (Quản trị viên)' if is_admin else ''}</h3>", unsafe_allow_html=True)
         if st.button(t["logout_btn"]):
             st.session_state["logged_in"] = False
             st.session_state["username"] = ""
@@ -328,9 +325,72 @@ with menu_selection[2]:
 
         st.markdown("---")
         st.markdown(f"<h3 style='text-align: center;'>{t['history_title']}</h3>", unsafe_allow_html=True)
-        user_data = get_user_scans(st.session_state["username"], limit=15)
-        if user_data:
-            df_history = pd.DataFrame(user_data, columns=["Thời gian", "Tên tệp", "Điểm AI (%)", "Đánh giá", "Nguồn gọi", "Đối tượng"])
-            st.dataframe(df_history, use_container_width=True, hide_index=True)
+        
+        user_scans = get_user_scans(st.session_state["username"], limit=15)
+        if user_scans:
+            for item in user_scans:
+                s_id, s_time, s_file, s_score, s_threat, s_src, s_sus, s_path = item
+                with st.expander(f"📌 [{s_time}] - Tệp: {s_file} (Rủi ro: {s_score}%)"):
+                    col_h1, col_h2 = st.columns([1.5, 1])
+                    with col_h1:
+                        st.write(f"**Đánh giá:** {s_threat}")
+                        st.write(f"**Nguồn:** {s_src} | **Đối tượng:** {s_sus}")
+                    with col_h2:
+                        if s_path and os.path.exists(s_path):
+                            st.write("**Nghe lại đoạn âm thanh:**")
+                            st.audio(s_path)
+                        else:
+                            st.caption("(Không tìm thấy file âm thanh lưu trữ)")
         else:
             st.info("Chưa có lịch sử phiên giám định nào của bạn." if st.session_state["lang"] == "Tiếng Việt" else "No forensic history found for your account.")
+
+# --- TAB 4: BẢNG QUẢN TRỊ ADMIN (Chỉ duy / admin mới thấy) ---
+if is_admin:
+    with menu_selection[3]:
+        st.markdown("<h2 style='text-align: center; color: #1a365d;'>👑 BẢNG QUẢN TRỊ HỆ THỐNG FRAUDSHIELD VOICE</h2>", unsafe_allow_html=True)
+        st.caption("Khu vực độc quyền dành cho Quản trị viên theo dõi toàn bộ cơ sở dữ liệu và giám sát hệ thống.")
+        st.markdown("---")
+        
+        all_users = get_all_users()
+        all_scans = get_all_scans_admin(limit=100)
+        deepfake_alerts = [s for s in all_scans if s[4] >= 65.0]
+        
+        # Thống kê nhanh (KPI Cards)
+        kpi1, kpi2, kpi3 = st.columns(3)
+        kpi1.metric("Tổng số tài khoản đã đăng ký", len(all_users))
+        kpi2.metric("Tổng số phiên giám định đã thực hiện", len(all_scans))
+        kpi3.metric("Số ca phát hiện Deepfake nguy cơ cao", len(deepfake_alerts))
+        
+        st.markdown("---")
+        
+        tab_adm1, tab_adm2 = st.tabs(["📋 Toàn bộ dữ liệu phiên giám định & Nghe lại", "👥 Danh sách tài khoản người dùng"])
+        
+        with tab_adm1:
+            st.subheader("Duyệt và nghe lại toàn bộ các cuộc gọi nghi vấn trên hệ thống")
+            if all_scans:
+                for scan in all_scans:
+                    # scan: (id, username, timestamp, filename, score, threat, call_source, suspect_type, audio_path)
+                    a_id, a_user, a_time, a_file, a_score, a_threat, a_src, a_sus, a_path = scan
+                    with st.expander(f"👤 User: {a_user} | [{a_time}] - {a_file} (Rủi ro: {a_score}%)"):
+                        col_a1, col_a2 = st.columns([1.5, 1])
+                        with col_a1:
+                            st.write(f"**Kết luận pháp y:** {a_threat}")
+                            st.write(f"**Nguồn cuộc gọi:** {a_src}")
+                            st.write(f"**Đối tượng mạo danh:** {a_sus}")
+                            st.caption(f"Đường dẫn vật lý: {a_path}")
+                        with col_a2:
+                            if a_path and os.path.exists(a_path):
+                                st.write("**Trình phát âm thanh điều tra:**")
+                                st.audio(a_path)
+                            else:
+                                st.caption("(Tệp âm thanh không tồn tại trên ổ đĩa)")
+            else:
+                st.info("Hệ thống chưa ghi nhận phiên giám định nào.")
+                
+        with tab_adm2:
+            st.subheader("Danh sách tài khoản hệ thống")
+            if all_users:
+                df_users = pd.DataFrame({"STT": range(1, len(all_users) + 1), "Tên tài khoản": all_users})
+                st.dataframe(df_users, use_container_width=True, hide_index=True)
+            else:
+                st.info("Chưa có người dùng nào đăng ký.")
