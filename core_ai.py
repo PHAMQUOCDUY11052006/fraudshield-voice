@@ -18,9 +18,10 @@ def get_ml_models():
 
 @st.cache_resource
 def load_cached_whisper():
-    return WhisperModel("tiny", device="cpu", compute_type="int8")
+    # Su dung ban 'base' voi toi uu hoa INT8 tren CPU
+    return WhisperModel("base", device="cpu", compute_type="int8")
 
-def preprocess_audio(y, top_db=20):
+def preprocess_audio(y, top_db=25):
     if len(y) == 0:
         return y
     y_trimmed, _ = librosa.effects.trim(y, top_db=top_db)
@@ -83,23 +84,33 @@ def predict_ml_score(y, sr, is_mic=False):
         feats_scaled = scaler.transform(feats)
         prob_fake = clf.predict_proba(feats_scaled)[0][1] * 100.0
         
-        # Bù trừ độ suy hao và codec nén âm thanh của micro trực tiếp
         if is_mic:
-            prob_fake = max(8.0, prob_fake - 32.0)
+            prob_fake = max(5.0, prob_fake - 42.0)
             
         return round(float(prob_fake), 1)
     return 15.0
 
-def transcribe_and_detect_scam(audio_path):
+def transcribe_and_detect_scam(audio_data):
+    """Nhan truc tiep mang numpy audio_data chuan 16kHz thay vi file path bi ma hoa"""
     model = load_cached_whisper()
-    segments, _ = model.transcribe(audio_path, language="vi", beam_size=1)
+    
+    # Nap mang audio da chuan hoa voi initial_prompt huong dan ngu canh tieng Viet
+    segments, _ = model.transcribe(
+        audio_data,
+        language="vi",
+        beam_size=5,
+        temperature=0.0,
+        initial_prompt="Đây là cuộc gọi đàm thoại tiếng Việt về công việc, tài chính ngân hàng hoặc điều tra tố tụng.",
+        vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=400)
+    )
     
     full_transcript = []
     flags = []
     keywords = {
-        "Mạo danh cơ quan tư pháp/chức năng": ["viện kiểm sát", "công an", "cán bộ điều tra", "tòa án", "lệnh bắt", "điều tra viên"],
-        "Tạo áp lực thời gian cưỡng bức": ["ngay lập tức", "30 phút", "khẩn cấp", "gấp", "phút nữa", "bảo mật"],
-        "Yêu cầu giao dịch tài chính bất thường": ["chuyển tiền", "tài khoản tạm giữ", "chuyển khoản", "tiền bảo lãnh", "mã otp", "ngân hàng"]
+        "Mạo danh cơ quan tư pháp/chức năng": ["viện kiểm sát", "công an", "cán bộ điều tra", "tòa án", "lệnh bắt", "điều tra viên", "cán bộ", "cơ quan điều tra"],
+        "Tạo áp lực thời gian cưỡng bức": ["ngay lập tức", "30 phút", "khẩn cấp", "gấp", "phút nữa", "bảo mật", "ngay"],
+        "Yêu cầu giao dịch tài chính bất thường": ["chuyển tiền", "tài khoản tạm giữ", "chuyển khoản", "tiền bảo lãnh", "mã otp", "ngân hàng", "tài khoản"]
     }
     
     for seg in segments:
@@ -125,7 +136,9 @@ def run_pipeline(uploaded_file, is_mic=False):
         tmp_path = tmp_file.name
 
     try:
+        # Load tin hieu goc ra mang numpy float32 chuan 16.000 Hz
         y, sr = librosa.load(tmp_path, sr=16000, mono=True)
+        
         fig_spec = extract_mel_spectrogram(y, sr)
         fig_xai = generate_xai_chart()
         score = predict_ml_score(y, sr, is_mic=is_mic)
@@ -137,7 +150,8 @@ def run_pipeline(uploaded_file, is_mic=False):
         else:
             threat = "Bình thường (Bona-fide)"
             
-        transcript, flags = transcribe_and_detect_scam(tmp_path)
+        # Truyen truc tiep mang y vao ham bóc băng
+        transcript, flags = transcribe_and_detect_scam(y)
 
         return {
             "score": score,
