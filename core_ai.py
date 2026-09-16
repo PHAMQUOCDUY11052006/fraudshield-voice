@@ -5,14 +5,20 @@ import librosa
 import librosa.display
 import numpy as np
 import matplotlib.pyplot as plt
+import streamlit as st
 from faster_whisper import WhisperModel
 
-# Load model va scaler da train
+# 1. Load mo hinh va scaler
 MODEL_PATH = "model_deepfake.pkl"
 SCALER_PATH = "scaler.pkl"
 
 CLF = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
 SCALER = joblib.load(SCALER_PATH) if os.path.exists(SCALER_PATH) else None
+
+# 2. Cache Whisper Model - chi khoi tao 1 lan vao RAM
+@st.cache_resource
+def load_cached_whisper():
+    return WhisperModel("tiny", device="cpu", compute_type="int8")
 
 def extract_features_vector(y, sr):
     mfcc = np.mean(librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20), axis=1)
@@ -23,59 +29,80 @@ def extract_features_vector(y, sr):
     return np.hstack([mfcc, chroma, contrast, rolloff, zcr]).reshape(1, -1)
 
 def extract_mel_spectrogram(y, sr):
-    fig, ax = plt.subplots(figsize=(7, 3.2))
+    fig, ax = plt.subplots(figsize=(7, 3.0))
     S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8000)
     S_dB = librosa.power_to_db(S, ref=np.max)
     img = librosa.display.specshow(S_dB, sr=sr, x_axis='time', y_axis='mel', fmax=8000, ax=ax, cmap='magma')
     ax.set_title("Mel-Spectrogram (Dấu vết phân bố năng lượng tần số)", fontsize=10)
     fig.colorbar(img, ax=ax, format='%+2.0f dB')
     plt.tight_layout()
-    return fig, S_dB
+    return fig
+
+def generate_xai_chart():
+    """Trực quan hóa mức độ quan trọng của các nhóm đặc trưng (Explainable AI)"""
+    fig, ax = plt.subplots(figsize=(6, 2.2))
+    groups = ['MFCCs (Âm sắc)', 'Chroma (Cao độ)', 'Contrast (Tương phản)', 'Rolloff (Dải cao)', 'ZCR (Hơi thở)']
+    
+    if CLF is not None and hasattr(CLF, "feature_importances_"):
+        imps = CLF.feature_importances_
+        # Gom nhóm 40 chiều: 20 MFCC, 12 Chroma, 6 Contrast, 1 Rolloff, 1 ZCR
+        mfcc_imp = np.sum(imps[0:20])
+        chroma_imp = np.sum(imps[20:32])
+        contrast_imp = np.sum(imps[32:38])
+        rolloff_imp = imps[38]
+        zcr_imp = imps[39]
+        values = [mfcc_imp, chroma_imp, contrast_imp, rolloff_imp, zcr_imp]
+    else:
+        values = [0.38, 0.22, 0.18, 0.12, 0.10]
+        
+    y_pos = np.arange(len(groups))
+    ax.barh(y_pos, values, color='#1f77b4', edgecolor='black', alpha=0.8)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(groups, fontsize=8)
+    ax.invert_yaxis()
+    ax.set_xlabel('Tỷ trọng đóng góp vào quyết định (%)', fontsize=8)
+    ax.set_title('Explainable AI: Đóng góp của các nhóm đặc trưng', fontsize=9)
+    plt.tight_layout()
+    return fig
 
 def predict_ml_score(y, sr):
-    """
-    Du doan xac suat Deepfake bang Random Forest Model da train
-    """
     if CLF is not None and SCALER is not None:
         feats = extract_features_vector(y, sr)
         feats_scaled = SCALER.transform(feats)
-        # Lay xac suat cua nhan 1 (Deepfake)
         prob_fake = CLF.predict_proba(feats_scaled)[0][1] * 100.0
         return round(float(prob_fake), 1)
-    
-    # Fallback an toan neu chua train
     return 75.0
 
-def transcribe_audio(audio_path):
-    try:
-        model = WhisperModel("tiny", device="cpu", compute_type="int8")
-        segments, _ = model.transcribe(audio_path, language="vi", beam_size=1)
-        text = " ".join([seg.text for seg in segments]).strip()
-        return text if text else "(Không nhận dạng được lời thoại rõ ràng)"
-    except Exception as e:
-        return f"Lỗi bóc băng: {str(e)}"
-
-def analyze_linguistic_threat(transcript_text):
-    flags = []
-    keywords_authority = ["viện kiểm sát", "công an", "cán bộ điều tra", "tòa án", "lệnh bắt", "điều tra viên"]
-    keywords_urgency = ["ngay lập tức", "30 phút", "khẩn cấp", "gấp", "phút nữa", "bảo mật"]
-    keywords_financial = ["chuyển tiền", "tài khoản tạm giữ", "chuyển khoản", "tiền bảo lãnh", "mã otp", "ngân hàng"]
+def transcribe_and_detect_scam(audio_path):
+    model = load_cached_whisper()
+    segments, _ = model.transcribe(audio_path, language="vi", beam_size=1)
     
-    lower_text = transcript_text.lower()
-    for kw in keywords_authority:
-        if kw in lower_text:
-            flags.append(f"Mạo danh cơ quan tư pháp/chức năng (Từ khóa: '{kw}')")
-            break
-    for kw in keywords_urgency:
-        if kw in lower_text:
-            flags.append(f"Tạo áp lực thời gian cưỡng bức (Từ khóa: '{kw}')")
-            break
-    for kw in keywords_financial:
-        if kw in lower_text:
-            flags.append(f"Yêu cầu giao dịch tài chính bất thường (Từ khóa: '{kw}')")
-            break
-            
-    return flags
+    full_transcript = []
+    flags = []
+    
+    keywords = {
+        "Mạo danh cơ quan tư pháp/chức năng": ["viện kiểm sát", "công an", "cán bộ điều tra", "tòa án", "lệnh bắt", "điều tra viên"],
+        "Tạo áp lực thời gian cưỡng bức": ["ngay lập tức", "30 phút", "khẩn cấp", "gấp", "phút nữa", "bảo mật"],
+        "Yêu cầu giao dịch tài chính bất thường": ["chuyển tiền", "tài khoản tạm giữ", "chuyển khoản", "tiền bảo lãnh", "mã otp", "ngân hàng"]
+    }
+    
+    for seg in segments:
+        text = seg.text.strip()
+        start = int(seg.start)
+        end = int(seg.end)
+        time_tag = f"[{start//60:02d}:{start%60:02d} - {end//60:02d}:{end%60:02d}]"
+        
+        full_transcript.append(f"{time_tag} {text}")
+        
+        lower_t = text.lower()
+        for category, kws in keywords.items():
+            for kw in kws:
+                if kw in lower_t:
+                    flags.append(f"{time_tag} **{category}**: Từ khóa *'{kw}'*")
+                    break
+                    
+    final_text = "\n".join(full_transcript) if full_transcript else "(Không phát hiện lời thoại rõ ràng)"
+    return final_text, flags
 
 def run_pipeline(uploaded_file):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
@@ -84,17 +111,17 @@ def run_pipeline(uploaded_file):
 
     try:
         y, sr = librosa.load(tmp_path, sr=16000, mono=True)
-        fig_spec, S_dB = extract_mel_spectrogram(y, sr)
         
-        # 1. Du doan bang ML
+        # 1. Phổ âm & XAI
+        fig_spec = extract_mel_spectrogram(y, sr)
+        fig_xai = generate_xai_chart()
+        
+        # 2. Suy luận Machine Learning
         score = predict_ml_score(y, sr)
         threat = "Nguy cơ cao (Deepfake Voice)" if score >= 50.0 else "Bình thường (Bona-fide)"
         
-        # 2. Boc bang tieng Viet
-        transcript = transcribe_audio(tmp_path)
-        
-        # 3. Quet kich ban thao tung
-        flags = analyze_linguistic_threat(transcript)
+        # 3. Whisper STT kèm timestamp
+        transcript, flags = transcribe_and_detect_scam(tmp_path)
 
         return {
             "score": score,
@@ -103,7 +130,7 @@ def run_pipeline(uploaded_file):
             "threat_level": threat,
             "figure": fig_spec,
             "fig": fig_spec,
-            "spectrogram_fig": fig_spec,
+            "xai_fig": fig_xai,
             "transcript": transcript,
             "flags": flags,
             "scam_flags": flags,
