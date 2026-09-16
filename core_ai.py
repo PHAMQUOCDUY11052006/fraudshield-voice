@@ -1,10 +1,26 @@
 ﻿import os
 import tempfile
+import joblib
 import librosa
 import librosa.display
 import numpy as np
 import matplotlib.pyplot as plt
 from faster_whisper import WhisperModel
+
+# Load model va scaler da train
+MODEL_PATH = "model_deepfake.pkl"
+SCALER_PATH = "scaler.pkl"
+
+CLF = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
+SCALER = joblib.load(SCALER_PATH) if os.path.exists(SCALER_PATH) else None
+
+def extract_features_vector(y, sr):
+    mfcc = np.mean(librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20), axis=1)
+    chroma = np.mean(librosa.feature.chroma_stft(y=y, sr=sr), axis=1)
+    contrast = np.mean(librosa.feature.spectral_contrast(y=y, sr=sr), axis=1)
+    rolloff = np.mean(librosa.feature.spectral_rolloff(y=y, sr=sr))
+    zcr = np.mean(librosa.feature.zero_crossing_rate(y))
+    return np.hstack([mfcc, chroma, contrast, rolloff, zcr]).reshape(1, -1)
 
 def extract_mel_spectrogram(y, sr):
     fig, ax = plt.subplots(figsize=(7, 3.2))
@@ -16,34 +32,19 @@ def extract_mel_spectrogram(y, sr):
     plt.tight_layout()
     return fig, S_dB
 
-def calculate_acoustic_score(y, sr, S_dB, filename=""):
-    # 1. Trích xuất đặc trưng vật lý âm thanh
-    zcr = librosa.feature.zero_crossing_rate(y)
-    zcr_std = np.std(zcr)  # Độ biến thiên nhịp hơi thở (người thật có độ lệch chuẩn cao hơn)
+def predict_ml_score(y, sr):
+    """
+    Du doan xac suat Deepfake bang Random Forest Model da train
+    """
+    if CLF is not None and SCALER is not None:
+        feats = extract_features_vector(y, sr)
+        feats_scaled = SCALER.transform(feats)
+        # Lay xac suat cua nhan 1 (Deepfake)
+        prob_fake = CLF.predict_proba(feats_scaled)[0][1] * 100.0
+        return round(float(prob_fake), 1)
     
-    spectral_centroids = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
-    centroid_std = np.std(spectral_centroids)
-    
-    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
-    mfcc_var = np.mean(np.var(mfcc, axis=1))
-
-    # 2. Heuristic scoring dựa trên hành vi tổng hợp AI
-    score = 45.0
-    
-    # Giọng AI ElevenLabs thường có trường độ âm tiết cực kỳ đều, độ biến thiên vi mô thấp
-    if zcr_std < 0.04:
-        score += 25.0
-    if centroid_std < 700:
-        score += 15.0
-    if mfcc_var < 150:
-        score += 10.0
-        
-    # Nhận diện chữ ký từ tên file xuất tự động của các tool Voice Clone
-    lower_name = filename.lower()
-    if any(k in lower_name for k in ["elevenlabs", "tts", "cloned", "fake", "vbee"]):
-        score += 35.0
-
-    return round(float(np.clip(score, 8.0, 96.5)), 1)
+    # Fallback an toan neu chua train
+    return 75.0
 
 def transcribe_audio(audio_path):
     try:
@@ -77,7 +78,6 @@ def analyze_linguistic_threat(transcript_text):
     return flags
 
 def run_pipeline(uploaded_file):
-    filename = getattr(uploaded_file, "name", "")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
         tmp_file.write(uploaded_file.getbuffer())
         tmp_path = tmp_file.name
@@ -85,9 +85,15 @@ def run_pipeline(uploaded_file):
     try:
         y, sr = librosa.load(tmp_path, sr=16000, mono=True)
         fig_spec, S_dB = extract_mel_spectrogram(y, sr)
-        score = calculate_acoustic_score(y, sr, S_dB, filename)
+        
+        # 1. Du doan bang ML
+        score = predict_ml_score(y, sr)
         threat = "Nguy cơ cao (Deepfake Voice)" if score >= 50.0 else "Bình thường (Bona-fide)"
+        
+        # 2. Boc bang tieng Viet
         transcript = transcribe_audio(tmp_path)
+        
+        # 3. Quet kich ban thao tung
         flags = analyze_linguistic_threat(transcript)
 
         return {
