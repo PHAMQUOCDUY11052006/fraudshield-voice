@@ -14,12 +14,32 @@ col_input, col_result = st.columns([1, 1.2], gap="medium")
 
 with col_input:
     st.subheader("📥 Dữ liệu kiểm định")
-    uploaded_file = st.file_uploader("Tải tệp âm thanh cuộc gọi nghi vấn (.wav, .mp3)", type=["wav", "mp3"])
-    call_source = st.selectbox("Nguồn cuộc gọi", ["GSM (Mạng di động)", "Zalo", "Telegram", "Khác"])
-    suspect_type = st.selectbox("Đối tượng nghi vấn", ["Cơ quan điều tra / Viện kiểm sát", "Ngân hàng", "Người thân", "Chưa rõ"])
+    
+    input_method = st.radio(
+        "Phương thức nạp âm thanh:",
+        ["Tải tệp âm thanh (.wav, .mp3)", "Thu âm trực tiếp qua Micro"],
+        horizontal=True
+    )
+    
+    is_mic = (input_method == "Thu âm trực tiếp qua Micro")
+    
+    if not is_mic:
+        uploaded_file = st.file_uploader("Tải tệp âm thanh cuộc gọi nghi vấn", type=["wav", "mp3"])
+        file_label = uploaded_file.name if uploaded_file else "file_upload"
+    else:
+        uploaded_file = st.audio_input("Nhấn nút tròn để Bắt đầu/Dừng ghi âm")
+        file_label = "Micro_Live_Record.wav"
+
+    call_source = st.selectbox(
+        "Nguồn cuộc gọi", 
+        ["Micro trực tiếp" if is_mic else "GSM (Mạng di động)", "Zalo", "Telegram", "Khác"]
+    )
+    suspect_type = st.selectbox(
+        "Đối tượng nghi vấn", 
+        ["Cơ quan điều tra / Viện kiểm sát", "Ngân hàng", "Người thân", "Chưa rõ"]
+    )
     
     if uploaded_file is not None:
-        st.audio(uploaded_file)
         btn_run = st.button("TIẾN HÀNH GIÁM ĐỊNH", type="primary", use_container_width=True)
     else:
         btn_run = False
@@ -28,18 +48,18 @@ with col_result:
     st.subheader("📊 Kết quả phân tích pháp y")
     if btn_run and uploaded_file is not None:
         with st.spinner("Đang trích xuất đặc trưng và phân tích pháp y số..."):
-            result = run_pipeline(uploaded_file)
+            result = run_pipeline(uploaded_file, is_mic=is_mic)
             
-            # Luu database SQLite
-            save_scan_result(uploaded_file.name, result['score'], result['threat'], call_source, suspect_type)
+            save_scan_result(file_label, result['score'], result['threat'], call_source, suspect_type)
             
-            # Khối kết luận
             col_m1, col_m2 = st.columns(2)
             with col_m1:
                 st.metric("Xác suất Giọng AI (Deepfake)", f"{result['score']}%")
             with col_m2:
-                if result['score'] >= 50.0:
+                if "Nguy cơ cao" in result['threat']:
                     st.error(f"Đánh giá: {result['threat']}")
+                elif "Nghi vấn" in result['threat']:
+                    st.warning(f"Đánh giá: {result['threat']}")
                 else:
                     st.success(f"Đánh giá: {result['threat']}")
                     
@@ -61,7 +81,7 @@ with col_result:
             else:
                 st.info("Không phát hiện dấu hiệu thao túng rõ rệt trong lời thoại.")
     else:
-        st.info("Vui lòng tải tệp âm thanh và bấm 'TIẾN HÀNH GIÁM ĐỊNH' để xem kết quả.")
+        st.info("Vui lòng tải tệp âm thanh hoặc thu âm trực tiếp rồi bấm 'TIẾN HÀNH GIÁM ĐỊNH'.")
 
 st.divider()
 
