@@ -1,100 +1,60 @@
 ﻿import os
 import glob
 import joblib
-import numpy as np
 import librosa
+import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report, accuracy_score, f1_score
+from core_ai import extract_features_vector
 
-def extract_features(file_path):
-    y, sr = librosa.load(file_path, sr=16000, mono=True)
-    
-    # 1. MFCC (20 he so dau)
-    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
-    mfcc_mean = np.mean(mfcc, axis=1)
-    
-    # 2. Chroma STFT
-    chroma = librosa.feature.chroma_stft(y=y, sr=sr)
-    chroma_mean = np.mean(chroma, axis=1)
-    
-    # 3. Spectral Contrast & Rolloff
-    contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
-    contrast_mean = np.mean(contrast, axis=1)
-    
-    rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)
-    rolloff_mean = np.mean(rolloff)
-    
-    # 4. Zero Crossing Rate
-    zcr = librosa.feature.zero_crossing_rate(y)
-    zcr_mean = np.mean(zcr)
-    
-    # Vector dac trung gop (40 chieu)
-    feature_vector = np.hstack([
-        mfcc_mean,
-        chroma_mean,
-        contrast_mean,
-        rolloff_mean,
-        zcr_mean
-    ])
-    return feature_vector
+print('Dang load du lieu huan luyen...')
+X, y = [], []
 
-def load_data():
-    X = []
-    y = []
-    
-    # Label 0: Real, Label 1: Deepfake
-    real_files = glob.glob('dataset/real/*.wav') + glob.glob('dataset/real/*.mp3')
-    fake_files = glob.glob('dataset/fake/*.wav') + glob.glob('dataset/fake/*.mp3')
-    
-    print(f'Dang load {len(real_files)} file Real va {len(fake_files)} file Fake...')
-    
-    for f in real_files:
-        try:
-            feats = extract_features(f)
-            X.append(feats)
-            y.append(0)
-        except Exception as e:
-            print(f'Loi doc file {f}: {e}')
-            
-    for f in fake_files:
-        try:
-            feats = extract_features(f)
-            X.append(feats)
-            y.append(1)
-        except Exception as e:
-            print(f'Loi doc file {f}: {e}')
-            
-    return np.array(X), np.array(y)
+# 1. Load Real samples (Nhan 0)
+real_files = glob.glob('dataset/real/*.wav') + glob.glob('dataset/real/*.mp3')
+for f in real_files:
+    try:
+        sig, sr = librosa.load(f, sr=16000, mono=True)
+        feats = extract_features_vector(sig, sr)
+        X.append(feats.flatten())
+        y.append(0)
+    except Exception:
+        pass
 
-def train():
-    X, y = load_data()
-    if len(X) < 4:
-        print('Can it nhat 2 file real va 2 file fake de chay pipeline train.')
-        return
-        
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    
-    # Train Random Forest Classifier
-    clf = RandomForestClassifier(n_estimators=100, max_depth=6, random_state=42)
-    clf.fit(X_scaled, y)
-    
-    y_pred = clf.predict(X_scaled)
-    acc = accuracy_score(y, y_pred)
-    f1 = f1_score(y, y_pred, zero_division=0)
-    
-    print('=' * 50)
-    print(f'HUAN LUYEN HOAN TAT:')
-    print(f'- Training Accuracy: {acc * 100:.2f}%')
-    print(f'- F1-Score: {f1:.4f}')
-    print('=' * 50)
-    
-    # Dong goi model va scaler
-    joblib.dump(clf, 'model_deepfake.pkl')
-    joblib.dump(scaler, 'scaler.pkl')
-    print('Da luu: model_deepfake.pkl va scaler.pkl')
+# 2. Load Fake samples (Nhan 1)
+fake_files = glob.glob('dataset/fake/*.wav') + glob.glob('dataset/fake/*.mp3')
+for f in fake_files:
+    try:
+        sig, sr = librosa.load(f, sr=16000, mono=True)
+        feats = extract_features_vector(sig, sr)
+        X.append(feats.flatten())
+        y.append(1)
+    except Exception:
+        pass
 
-if __name__ == '__main__':
-    train()
+X = np.array(X)
+y = np.array(y)
+
+print(f'Tong cong: {np.sum(y == 0)} mau Real va {np.sum(y == 1)} mau Fake.')
+
+# Chuan hoa dac trung
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Huan luyen voi Random Forest toi uu chong overfitting tren moi truong thuc
+clf = RandomForestClassifier(
+    n_estimators=150,
+    max_depth=5,
+    min_samples_split=4,
+    min_samples_leaf=2,
+    class_weight='balanced',
+    random_state=42
+)
+clf.fit(X_scaled, y)
+
+joblib.dump(clf, 'model_deepfake.pkl')
+joblib.dump(scaler, 'scaler.pkl')
+
+train_acc = clf.score(X_scaled, y) * 100.0
+print(f'Huan luyen thanh cong! Accuracy tong the: {train_acc:.2f}%')
+print('Da luu lai model_deepfake.pkl va scaler.pkl!')
