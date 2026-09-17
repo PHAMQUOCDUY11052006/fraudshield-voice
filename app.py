@@ -5,9 +5,7 @@ import sqlite3
 from datetime import datetime
 from core_ai import run_pipeline
 
-# ==============================
-# CẤU HÌNH TRANG & GIAO DIỆN
-# ==============================
+# Cấu hình trang
 st.set_page_config(
     page_title="HỆ THỐNG GIÁM ĐỊNH & ĐIỀU TRA CUỘC GỌI DEEPFAKE",
     page_icon="🛡️",
@@ -24,7 +22,7 @@ except FileNotFoundError:
     pass
 
 # ==============================
-# QUẢN TRỊ CƠ SỞ DỮ LIỆU SQLITE
+# KHỞI TẠO VÀ QUẢN LÝ SQLITE
 # ==============================
 def init_db():
     conn = sqlite3.connect("forensic_admin.db")
@@ -55,7 +53,7 @@ def init_db():
         )
     """)
     
-    # Khởi tạo mặc định admin Duy và user thường
+    # Khởi tạo mặc định tài khoản admin cho Duy
     c.execute("SELECT * FROM users WHERE username = 'duy'")
     if not c.fetchone():
         c.execute("INSERT INTO users (username, password, fullname, agency, role) VALUES ('duy', '123456', 'Nguyễn Duy (Lead Admin)', 'Ban Chỉ Đạo An Ninh Mạng', 'admin')")
@@ -110,7 +108,7 @@ def get_scans(username=None, is_admin=False):
 init_db()
 
 # ==============================
-# QUẢN LÝ SESSION STATE
+# SESSION STATE & NGÔN NGỮ
 # ==============================
 if "lang" not in st.session_state:
     st.session_state["lang"] = "Tiếng Việt"
@@ -123,9 +121,6 @@ if "role" not in st.session_state:
 if "consent_given" not in st.session_state:
     st.session_state["consent_given"] = False
 
-# ==============================
-# TỪ ĐIỂN ĐA NGÔN NGỮ
-# ==============================
 TEXTS = {
     "Tiếng Việt": {
         "title": "HỆ THỐNG GIÁM ĐỊNH & ĐIỀU TRA CUỘC GỌI DEEPFAKE",
@@ -200,7 +195,7 @@ t = TEXTS[st.session_state["lang"]]
 if not st.session_state["consent_given"]:
     @st.dialog("Quy chế bảo mật hệ thống / Security Policy")
     def consent_dialog():
-        st.write("Chào mừng bạn đến với Hệ thống Giám định & Điều tra cuộc gọi Deepfake. Vui lòng xác nhận đồng ý với quy chế xử lý dữ liệu để tiếp tục.")
+        st.write("Chào mừng bạn đến với Hệ thống Giám định & Điều tra cuộc gọi Deepfake. Vui lòng xác nhận đồng ý để tiếp tục.")
         col_c1, col_c2 = st.columns(2)
         with col_c1:
             if st.button("Từ chối / Decline", use_container_width=True):
@@ -269,14 +264,13 @@ with menu_selection[0]:
         btn_run = False
         st.info("Vui lòng tải tệp âm thanh ở cột bên trái để thực hiện giám định." if st.session_state["lang"] == "Tiếng Việt" else "Please upload an audio file on the left to proceed.")
 
-    # XỬ LÝ PHÂN TÍCH & GHI DATABASE
+    # XỬ LÝ PHÂN TÍCH & LƯU DB
     if btn_run and uploaded_file is not None:
         st.markdown(f"<h2 style='text-align: center; color: #1a365d; margin-top: 30px;'>{t['result_title']}</h2>", unsafe_allow_html=True)
         
         with st.spinner(t["info_wait"]):
             result = run_pipeline(uploaded_file, is_mic=False)
 
-        # Lưu audio tĩnh để phát lại trong phần log
         ts_now = datetime.now().strftime("%Y%m%d_%H%M%S")
         saved_filename = f"{ts_now}_{uploaded_file.name}"
         saved_path = os.path.join(AUDIO_STORE_DIR, saved_filename)
@@ -289,7 +283,6 @@ with menu_selection[0]:
         p_nlp = float(result.get("nlp_fake_prob", 0.0))
         inv_name = st.session_state["username"] if st.session_state["logged_in"] else "Khách (Guest)"
 
-        # Ghi trực tiếp vào SQLite (luôn lưu dù đã đăng nhập hay chưa)
         try:
             conn = sqlite3.connect("forensic_admin.db")
             c = conn.cursor()
@@ -314,7 +307,6 @@ with menu_selection[0]:
         except Exception as e:
             st.error(f"Lỗi ghi database: {e}")
 
-        # Bảng thông tin phiên
         st.markdown(f"<h3 style='text-align: center;'>{t['sys_info_title']}</h3>", unsafe_allow_html=True)
         df_info = pd.DataFrame({
             "Thông số hệ thống" if st.session_state["lang"] == "Tiếng Việt" else "System Parameter": [
@@ -327,7 +319,6 @@ with menu_selection[0]:
         st.dataframe(df_info, use_container_width=True, hide_index=True)
         st.write("")
 
-        # Khung chỉ số rủi ro
         col_res_left, col_res_right = st.columns([1, 2], gap="large")
 
         with col_res_left:
@@ -366,7 +357,6 @@ with menu_selection[0]:
             else:
                 st.success(t["no_flags"])
 
-        # Biểu đồ âm học & XAI
         st.write("")
         col_sub1, col_sub2 = st.columns(2, gap="large")
         with col_sub1:
@@ -378,7 +368,7 @@ with menu_selection[0]:
             if result.get("xai_fig") is not None:
                 st.pyplot(result["xai_fig"])
 
-    # LỊCH SỬ GIÁM ĐỊNH (AUDIT LOG KÈM FILE AUDIO)
+    # BẢNG LOG LỊCH SỬ KÈM PLAYER AUDIO
     st.markdown("<hr style='margin-top: 30px;'>", unsafe_allow_html=True)
     st.markdown(f"<h3 style='text-align: center;'>{t['history_title']}</h3>", unsafe_allow_html=True)
 

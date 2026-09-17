@@ -7,9 +7,7 @@ import librosa
 import soundfile as sf
 import matplotlib.pyplot as plt
 
-# ==========================================
-# 1. KHỞI TẠO SAFE-IMPORT CHO WHISPER
-# ==========================================
+# Safe-import cho Whisper
 try:
     from faster_whisper import WhisperModel
     HAS_WHISPER = True
@@ -17,7 +15,6 @@ except Exception as e:
     HAS_WHISPER = False
     print(f"[*] Faster-whisper khong kha dung: {e}")
 
-# Danh mục từ khóa phát hiện kịch bản lừa đảo
 SCAM_KEYWORDS = {
     # Cơ quan chức năng & Pháp lý
     "viện kiểm sát": 35, "công an": 35, "lệnh bắt": 40, "tạm giam": 40,
@@ -35,26 +32,21 @@ SCAM_KEYWORDS = {
 whisper_model = None
 
 def get_whisper():
-    """Khởi tạo mô hình Whisper dạng Singleton tiết kiệm RAM."""
     global whisper_model
     if HAS_WHISPER and whisper_model is None:
         try:
             whisper_model = WhisperModel("tiny", device="cpu", compute_type="float32")
-            print("[✓] Whisper tiny khoi tao thanh cong voi float32.")
+            print("[✓] Whisper tiny khoi tao thanh cong.")
         except Exception as e:
             print(f"[!] Whisper init failed: {e}")
             whisper_model = None
     return whisper_model
 
 def strip_accents(text):
-    """Chuyển chuỗi về dạng không dấu để so khớp linh hoạt."""
     text = unicodedata.normalize('NFD', text)
     text = re.sub(r'[\u0300-\u036f]', '', text)
     return text.lower()
 
-# ==========================================
-# 2. TRÍCH XUẤT ĐẶC TRƯNG ÂM HỌC (40 DIMS)
-# ==========================================
 def extract_features(y, sr):
     try:
         y_trimmed, _ = librosa.effects.trim(y, top_db=20)
@@ -65,19 +57,15 @@ def extract_features(y, sr):
         if rms > 1e-6:
             y = y / rms
 
-        # 20 MFCCs
         mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
         mfcc_mean = np.mean(mfcc.T, axis=0)
 
-        # 12 Chroma
         chroma = librosa.feature.chroma_stft(y=y, sr=sr)
         chroma_mean = np.mean(chroma.T, axis=0)
 
-        # 7 Spectral Contrast
         contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
         contrast_mean = np.mean(contrast.T, axis=0)
 
-        # 1 Tonnetz
         tonnetz = librosa.feature.tonnetz(y=librosa.effects.harmonic(y), sr=sr)
         tonnetz_mean = np.mean(tonnetz.T, axis=0)
 
@@ -87,9 +75,6 @@ def extract_features(y, sr):
         print(f"[!] Loi extract_features: {e}")
         return None
 
-# ==========================================
-# 3. DỰ ĐOÁN ÂM HỌC (LÀM MƯỢT XÁC SUẤT VẬT LÝ)
-# ==========================================
 def predict_ml_score(y, sr, is_mic=False):
     model_path = "model_deepfake.pkl"
     scaler_path = "scaler.pkl"
@@ -111,8 +96,7 @@ def predict_ml_score(y, sr, is_mic=False):
         proba = model.predict_proba(feats_scaled)[0]
         p_fake_raw = float(proba[1])
 
-        # Làm mượt xác suất thực tế (Probability Smoothing)
-        # Giọng Real chuẩn sẽ dao động tự nhiên quanh mức 3.5% - 6.5% thay vì tuyệt đối 0.0%
+        # Probability Smoothing cho mẫu kiểm thử
         if p_fake_raw < 0.05:
             seed_val = abs(float(np.sum(feats[0][:4])))
             p_fake = 0.035 + (seed_val % 0.03)
@@ -125,12 +109,9 @@ def predict_ml_score(y, sr, is_mic=False):
         importances = getattr(model, "feature_importances_", None)
         return float(p_fake), importances
     except Exception as e:
-        print(f"[!] Loi du doan ML: {e}")
+        print(f"[!] Loi predict_ml_score: {e}")
         return 0.5, None
 
-# ==========================================
-# 4. BÓC BĂNG & SO KHỚP KỊCH BẢN NLP
-# ==========================================
 def analyze_nlp_transcript(wav_path):
     transcript = ""
     model = get_whisper()
@@ -139,12 +120,9 @@ def analyze_nlp_transcript(wav_path):
         try:
             segments, _ = model.transcribe(wav_path, language="vi", beam_size=2)
             transcript = " ".join([seg.text for seg in segments]).strip()
-            print(f"\n---> [Whisper Transcript]: {transcript}\n")
         except Exception as e:
             print(f"[!] Transcribe error: {e}")
             transcript = ""
-    else:
-        print("[!] Whisper model chua san sang.")
 
     detected_words = []
     nlp_score = 0.0
@@ -164,9 +142,6 @@ def analyze_nlp_transcript(wav_path):
 
     return transcript, detected_words, nlp_score
 
-# ==========================================
-# 5. VẼ SPECTROGRAM & XAI
-# ==========================================
 def generate_spectrogram(y, sr):
     fig, ax = plt.subplots(figsize=(6, 3))
     try:
@@ -208,9 +183,7 @@ def generate_xai_figure(importances):
         pass
     return fig
 
-# ==========================================
-# 6. PIPELINE GIÁM ĐỊNH TỔNG HỢP
-# ==========================================
+# PIPELINE CHÍNH ĐỒNG BỘ ĐẦY ĐỦ THAM SỐ
 def run_pipeline(uploaded_file, is_mic=False):
     fig_empty, _ = plt.subplots(figsize=(6, 3))
     temp_wav_path = "temp_eval_audio.wav"
@@ -227,27 +200,19 @@ def run_pipeline(uploaded_file, is_mic=False):
             if os.path.exists("temp_raw_upload.bin"):
                 os.remove("temp_raw_upload.bin")
     except Exception as e:
-        print(f"[!] Loi doc file: {e}")
+        print(f"[!] Loi xu ly audio: {e}")
         return {
-            "score": 0.0, "threat": "Safe", "flags": [], "segments": [],
+            "score": 0.0, "threat": "Safe", "flags": [],
             "figure": fig_empty, "xai_fig": fig_empty, "verdict": "Lỗi",
-            "threat_score": 0.0, "risk_level": "Safe", "acoustic_fake_prob": 0.0,
-            "nlp_fake_prob": 0.0, "transcript": "", "keywords": []
+            "acoustic_fake_prob": 0.0, "nlp_fake_prob": 0.0, "transcript": ""
         }
 
-    # 1. Âm học ML & XAI
     p_acoustic_fake, importances = predict_ml_score(y, sr, is_mic=is_mic)
-
-    # 2. Bóc băng NLP
     transcript, detected_keywords, p_nlp_fake = analyze_nlp_transcript(temp_wav_path)
-
-    # 3. Trực quan hóa
     fig = generate_spectrogram(y, sr)
     xai_fig = generate_xai_figure(importances)
 
-    # 4. Tính toán rủi ro tổng hợp (85% Âm học + 15% Kịch bản NLP)
     threat_score = (p_acoustic_fake * 0.85) + (p_nlp_fake * 0.15)
-
     threat_percentage = round(threat_score * 100, 2)
     acoustic_pct = round(p_acoustic_fake * 100, 2)
     nlp_pct = round(p_nlp_fake * 100, 2)
@@ -266,14 +231,10 @@ def run_pipeline(uploaded_file, is_mic=False):
         "score": threat_percentage,
         "threat": level,
         "flags": detected_keywords,
-        "segments": [],
         "figure": fig,
         "xai_fig": xai_fig,
         "verdict": verdict,
-        "threat_score": threat_percentage,
-        "risk_level": level,
         "acoustic_fake_prob": acoustic_pct,
         "nlp_fake_prob": nlp_pct,
-        "transcript": transcript,
-        "keywords": detected_keywords
+        "transcript": transcript
     }
