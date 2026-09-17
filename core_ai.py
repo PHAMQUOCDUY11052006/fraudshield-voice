@@ -1,166 +1,143 @@
 ﻿import os
-import tempfile
-import joblib
-import librosa
-import librosa.display
+import pickle
 import numpy as np
-import matplotlib.pyplot as plt
-import streamlit as st
+import librosa
 from faster_whisper import WhisperModel
 
-MODEL_PATH = "model_deepfake.pkl"
-SCALER_PATH = "scaler.pkl"
+# 1. Danh muc tu khoa lua dao & he so phat hien
+SCAM_KEYWORDS = {
+    "viện kiểm sát": 25,
+    "công an": 25,
+    "lệnh bắt": 30,
+    "tạm giam": 30,
+    "phong tỏa": 25,
+    "rửa tiền": 25,
+    "mã otp": 35,
+    "chuyển tiền": 20,
+    "tài khoản tạm giữ": 30,
+    "bí mật chuyên án": 25,
+    "khóa sim": 20,
+    "viễn thông": 15,
+    "cưỡng chế": 25,
+    "truy nã": 30
+}
 
-def get_ml_models():
-    clf = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
-    scaler = joblib.load(SCALER_PATH) if os.path.exists(SCALER_PATH) else None
-    return clf, scaler
+# Cache model whisper de tranh khoi tao lai nhieu lan
+whisper_model = None
 
-@st.cache_resource
-def load_cached_whisper():
-    # Su dung ban 'base' voi toi uu hoa INT8 tren CPU
-    return WhisperModel("base", device="cpu", compute_type="int8")
+def get_whisper():
+    global whisper_model
+    if whisper_model is None:
+        # Chay model tiny tren CPU de tiet kiem bo nho Streamlit Cloud
+        whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+    return whisper_model
 
-def preprocess_audio(y, top_db=25):
-    if len(y) == 0:
-        return y
-    y_trimmed, _ = librosa.effects.trim(y, top_db=top_db)
-    if len(y_trimmed) < 1600:
-        y_trimmed = y
-    max_val = np.max(np.abs(y_trimmed))
-    if max_val > 0:
-        y_trimmed = y_trimmed / max_val
-    return y_trimmed
-
-def extract_features_vector(y, sr):
-    y_clean = preprocess_audio(y)
-    mfcc = np.mean(librosa.feature.mfcc(y=y_clean, sr=sr, n_mfcc=20), axis=1)
-    chroma = np.mean(librosa.feature.chroma_stft(y=y_clean, sr=sr), axis=1)
-    contrast = np.mean(librosa.feature.spectral_contrast(y=y_clean, sr=sr), axis=1)
-    rolloff = np.mean(librosa.feature.spectral_rolloff(y=y_clean, sr=sr))
-    zcr = np.mean(librosa.feature.zero_crossing_rate(y_clean))
-    return np.hstack([mfcc, chroma, contrast, rolloff, zcr]).reshape(1, -1)
-
-def extract_mel_spectrogram(y, sr):
-    y_clean = preprocess_audio(y)
-    fig, ax = plt.subplots(figsize=(7, 3.0))
-    S = librosa.feature.melspectrogram(y=y_clean, sr=sr, n_mels=128, fmax=8000)
-    S_dB = librosa.power_to_db(S, ref=np.max)
-    img = librosa.display.specshow(S_dB, sr=sr, x_axis='time', y_axis='mel', fmax=8000, ax=ax, cmap='magma')
-    ax.set_title("Mel-Spectrogram (Dấu vết phân bố năng lượng tần số)", fontsize=10)
-    fig.colorbar(img, ax=ax, format='%+2.0f dB')
-    plt.tight_layout()
-    return fig
-
-def generate_xai_chart():
-    fig, ax = plt.subplots(figsize=(6, 2.2))
-    groups = ['MFCCs (Âm sắc)', 'Chroma (Cao độ)', 'Contrast (Tương phản)', 'Rolloff (Dải cao)', 'ZCR (Hơi thở)']
-    clf, _ = get_ml_models()
-    if clf is not None and hasattr(clf, "feature_importances_"):
-        imps = clf.feature_importances_
-        mfcc_imp = np.sum(imps[0:20])
-        chroma_imp = np.sum(imps[20:32])
-        contrast_imp = np.sum(imps[32:38])
-        rolloff_imp = imps[38]
-        zcr_imp = imps[39]
-        values = [mfcc_imp, chroma_imp, contrast_imp, rolloff_imp, zcr_imp]
-    else:
-        values = [0.38, 0.22, 0.18, 0.12, 0.10]
-        
-    y_pos = np.arange(len(groups))
-    ax.barh(y_pos, values, color='#1f77b4', edgecolor='black', alpha=0.8)
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(groups, fontsize=8)
-    ax.invert_yaxis()
-    ax.set_xlabel('Tỷ trọng đóng góp (%)', fontsize=8)
-    ax.set_title('Explainable AI: Trọng số phân loại', fontsize=9)
-    plt.tight_layout()
-    return fig
-
-def predict_ml_score(y, sr, is_mic=False):
-    clf, scaler = get_ml_models()
-    if clf is not None and scaler is not None:
-        feats = extract_features_vector(y, sr)
-        feats_scaled = scaler.transform(feats)
-        prob_fake = clf.predict_proba(feats_scaled)[0][1] * 100.0
-        
-        if is_mic:
-            prob_fake = max(5.0, prob_fake - 42.0)
-            
-        return round(float(prob_fake), 1)
-    return 15.0
-
-def transcribe_and_detect_scam(audio_data):
-    """Nhan truc tiep mang numpy audio_data chuan 16kHz thay vi file path bi ma hoa"""
-    model = load_cached_whisper()
-    
-    # Nap mang audio da chuan hoa voi initial_prompt huong dan ngu canh tieng Viet
-    segments, _ = model.transcribe(
-        audio_data,
-        language="vi",
-        beam_size=5,
-        temperature=0.0,
-        initial_prompt="Đây là cuộc gọi đàm thoại tiếng Việt về công việc, tài chính ngân hàng hoặc điều tra tố tụng.",
-        vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=400)
-    )
-    
-    full_transcript = []
-    flags = []
-    keywords = {
-        "Mạo danh cơ quan tư pháp/chức năng": ["viện kiểm sát", "công an", "cán bộ điều tra", "tòa án", "lệnh bắt", "điều tra viên", "cán bộ", "cơ quan điều tra"],
-        "Tạo áp lực thời gian cưỡng bức": ["ngay lập tức", "30 phút", "khẩn cấp", "gấp", "phút nữa", "bảo mật", "ngay"],
-        "Yêu cầu giao dịch tài chính bất thường": ["chuyển tiền", "tài khoản tạm giữ", "chuyển khoản", "tiền bảo lãnh", "mã otp", "ngân hàng", "tài khoản"]
-    }
-    
-    for seg in segments:
-        text = seg.text.strip()
-        start = int(seg.start)
-        end = int(seg.end)
-        time_tag = f"[{start//60:02d}:{start%60:02d} - {end//60:02d}:{end%60:02d}]"
-        full_transcript.append(f"{time_tag} {text}")
-        
-        lower_t = text.lower()
-        for category, kws in keywords.items():
-            for kw in kws:
-                if kw in lower_t:
-                    flags.append(f"{time_tag} **{category}**: Từ khóa *'{kw}'*")
-                    break
-                    
-    final_text = "\n".join(full_transcript) if full_transcript else "(Không phát hiện lời thoại rõ ràng)"
-    return final_text, flags
-
-def run_pipeline(uploaded_file, is_mic=False):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-        tmp_file.write(uploaded_file.getbuffer())
-        tmp_path = tmp_file.name
-
+def extract_features_inference(audio_path):
+    """Trich xuat dac trung dong bo voi pipeline huan luyen."""
     try:
-        # Load tin hieu goc ra mang numpy float32 chuan 16.000 Hz
-        y, sr = librosa.load(tmp_path, sr=16000, mono=True)
-        
-        fig_spec = extract_mel_spectrogram(y, sr)
-        fig_xai = generate_xai_chart()
-        score = predict_ml_score(y, sr, is_mic=is_mic)
-        
-        if score >= 65.0:
-            threat = "Nguy cơ cao (Deepfake Voice)"
-        elif score >= 45.0:
-            threat = "Nghi vấn (Cần kiểm chứng thêm)"
-        else:
-            threat = "Bình thường (Bona-fide)"
+        y, sr = librosa.load(audio_path, sr=16000, mono=True)
+        if len(y) < sr * 0.3:
+            return None
             
-        # Truyen truc tiep mang y vao ham bóc băng
-        transcript, flags = transcribe_and_detect_scam(y)
+        y, _ = librosa.effects.trim(y, top_db=25)
+        
+        rms = np.sqrt(np.mean(y**2))
+        if rms > 1e-6:
+            y = y / rms
 
-        return {
-            "score": score,
-            "threat": threat,
-            "figure": fig_spec,
-            "xai_fig": fig_xai,
-            "transcript": transcript,
-            "flags": flags
-        }
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
+        mfcc_mean = np.mean(mfcc.T, axis=0)
+
+        chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+        chroma_mean = np.mean(chroma.T, axis=0)
+
+        contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
+        contrast_mean = np.mean(contrast.T, axis=0)
+
+        tonnetz = librosa.feature.tonnetz(y=librosa.effects.harmonic(y), sr=sr)
+        tonnetz_mean = np.mean(tonnetz.T, axis=0)
+
+        features = np.hstack([mfcc_mean, chroma_mean, contrast_mean, tonnetz_mean[:1]])
+        return features.reshape(1, -1)
+    except Exception as e:
+        print(f"Loi doc audio test: {e}")
+        return None
+
+def analyze_audio_forensics(audio_path):
+    """Du doan xac suat Fake qua am hoc."""
+    if not os.path.exists("model_deepfake.pkl") or not os.path.exists("scaler.pkl"):
+        return 0.5  # Fallback neu chua co model
+        
+    with open("model_deepfake.pkl", "rb") as f:
+        model = pickle.load(f)
+    with open("scaler.pkl", "rb") as f:
+        scaler = pickle.load(f)
+        
+    feat = extract_features_inference(audio_path)
+    if feat is None:
+        return 0.5
+        
+    scaled_feat = scaler.transform(feat)
+    proba = model.predict_proba(scaled_feat)[0]
+    p_fake_raw = proba[1]
+    
+    # Hieu chinh do nhay: Neu xac suat fake >= 0.35 thi kich hoat scale canh bao
+    if p_fake_raw >= 0.35:
+        p_fake = min(1.0, p_fake_raw * 1.3)
+    else:
+        p_fake = p_fake_raw * 0.8
+        
+    return p_fake
+
+def analyze_nlp_transcript(audio_path):
+    """Boc bang am thanh va cham diem tu khoa kich ban lua dao."""
+    try:
+        model = get_whisper()
+        segments, _ = model.transcribe(audio_path, language="vi")
+        transcript = " ".join([seg.text for seg in segments]).strip()
+    except Exception as e:
+        transcript = ""
+        
+    detected_words = []
+    nlp_score = 0
+    transcript_lower = transcript.lower()
+    
+    for kw, score in SCAM_KEYWORDS.items():
+        if kw in transcript_lower:
+            detected_words.append(kw)
+            nlp_score += score
+            
+    nlp_score = min(100, nlp_score) / 100.0
+    return transcript, detected_words, nlp_score
+
+def run_pipeline(audio_path):
+    """Tong hop ket qua giam dinh da tang."""
+    # 1. Forensic Acoustic Analysis (60%)
+    p_acoustic_fake = analyze_audio_forensics(audio_path)
+    
+    # 2. NLP Semantic Analysis (40%)
+    transcript, detected_keywords, p_nlp_fake = analyze_nlp_transcript(audio_path)
+    
+    # Tong hop diem rui ro (Threat Score: 0 - 100%)
+    threat_score = (p_acoustic_fake * 0.6) + (p_nlp_fake * 0.4)
+    threat_percentage = round(threat_score * 100, 2)
+    
+    if threat_percentage < 40:
+        verdict = "Real"
+        level = "Safe"
+    elif threat_percentage < 70:
+        verdict = "Suspicious"
+        level = "Warning"
+    else:
+        verdict = "Fake"
+        level = "Danger"
+        
+    return {
+        "verdict": verdict,
+        "threat_score": threat_percentage,
+        "risk_level": level,
+        "acoustic_fake_prob": round(p_acoustic_fake * 100, 2),
+        "nlp_fake_prob": round(p_nlp_fake * 100, 2),
+        "transcript": transcript,
+        "keywords": detected_keywords
+    }
