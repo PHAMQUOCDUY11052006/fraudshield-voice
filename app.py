@@ -379,15 +379,14 @@ if st.session_state["active_tab"] == "Trang chủ":
             """, unsafe_allow_html=True)
 
         with c_status:
+            flags_html = " ".join([f'<span style="background:#fee2e2; color:#dc2626; padding:3px 10px; border-radius:4px; font-weight:700; font-size:0.85rem; margin-right:6px;">{kw}</span>' for kw in result.get("flags", [])]) if result.get("flags") else ""
+            desc_text = "Phát hiện các từ khóa mang tính đe dọa, phong tỏa hoặc giục chuyển tiền gấp." if result.get("flags") else "Không phát hiện từ khóa bất thường trong kịch bản đàm thoại."
+            
             st.markdown(f"""
             <div class="custom-card">
                 <p style="color: #64748b; font-size: 0.85rem; font-weight: 700; text-transform: uppercase; margin-bottom: 8px;">Dấu Hiệu Thao Túng Tâm Lý</p>
-                <div style="font-size: 0.92rem; color: #475569; line-height: 1.6;">
-                    {"Phát hiện các từ khóa mang tính đe dọa, phong tỏa hoặc giục chuyển tiền gấp." if result.get("flags") else "Không phát hiện từ khóa bất thường trong kịch bản đàm thoại."}
-                </div>
-                <div style="margin-top: 10px;">
-                    {" ".join([f'<span style="background:#fee2e2; color:#dc2626; padding:3px 10px; border-radius:4px; font-weight:700; font-size:0.85rem; margin-right:6px;">{kw}</span>' for kw in result.get("flags", [])]) if result.get("flags") else ""}
-                </div>
+                <div style="font-size: 0.92rem; color: #475569; line-height: 1.6;">{desc_text}</div>
+                <div style="margin-top: 10px;">{flags_html}</div>
             </div>
             """, unsafe_allow_html=True)
 
