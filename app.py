@@ -11,7 +11,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Thư mục lưu audio phục vụ nghe lại trong Audit Log
 AUDIO_STORE_DIR = "saved_audios"
 os.makedirs(AUDIO_STORE_DIR, exist_ok=True)
 
@@ -21,9 +20,6 @@ try:
 except FileNotFoundError:
     pass
 
-# ==============================
-# KHỞI TẠO VÀ QUẢN LÝ SQLITE
-# ==============================
 def init_db():
     conn = sqlite3.connect("forensic_admin.db")
     c = conn.cursor()
@@ -52,21 +48,23 @@ def init_db():
             investigator TEXT
         )
     """)
-    
+
     c.execute("SELECT * FROM users WHERE username = 'duy'")
     if not c.fetchone():
         c.execute("INSERT INTO users (username, password, fullname, agency, role) VALUES ('duy', '123456', 'Nguyen Duy (Lead Admin)', 'Ban An Ninh Mang', 'admin')")
     else:
         c.execute("UPDATE users SET password = '123456', role = 'admin' WHERE username = 'duy'")
 
-    c.execute("SELECT * FROM users WHERE username = 'admin'")
+    c.execute("SELECT * FROM users WHERE username = 'hien'")
     if not c.fetchone():
-        c.execute("INSERT INTO users (username, password, fullname, agency, role) VALUES ('admin', 'admin123', 'Quan Tri Vien He Thong', 'Cuc An Ninh Mang', 'admin')")
+        c.execute("INSERT INTO users (username, password, fullname, agency, role) VALUES ('hien', '123456', 'Tran Hien (Lead Admin)', 'Ban An Ninh Mang', 'admin')")
+    else:
+        c.execute("UPDATE users SET password = '123456', role = 'admin' WHERE username = 'hien'")
 
     c.execute("SELECT * FROM users WHERE username = 'user'")
     if not c.fetchone():
         c.execute("INSERT INTO users (username, password, fullname, agency, role) VALUES ('user', 'user123', 'Dieu Tra Vien Co So', 'Cong An Co So', 'user')")
-        
+
     conn.commit()
     conn.close()
 
@@ -82,7 +80,7 @@ def register_user(username, password, fullname, agency):
     try:
         conn = sqlite3.connect("forensic_admin.db")
         c = conn.cursor()
-        c.execute("INSERT INTO users (username, password, fullname, agency, role) VALUES (?, ?, ?, ?, 'user')", 
+        c.execute("INSERT INTO users (username, password, fullname, agency, role) VALUES (?, ?, ?, ?, 'user')",
                   (username, password, fullname, agency))
         conn.commit()
         conn.close()
@@ -106,9 +104,6 @@ def get_scans(username=None, is_admin=False):
 
 init_db()
 
-# ==============================
-# SESSION STATE & NGÔN NGỮ
-# ==============================
 if "lang" not in st.session_state:
     st.session_state["lang"] = "Tiếng Việt"
 if "active_tab" not in st.session_state:
@@ -129,7 +124,7 @@ TEXTS = {
         "hero_tag": "HE THONG GIAM DINH CHUYEN DUNG",
         "hero_title_1": "Hệ thống giám định & điều tra cuộc gọi",
         "hero_title_2": "Deepfake",
-        "hero_desc": "Phân tích và giám định kỹ thuật âm thanh số dựa trên cơ chế Dual-Engine (Âm học 85% kết hợp Ngữ nghĩa NLP 15%), phục vụ điều tra các cuộc gọi nghi vấn mạo danh.",
+        "hero_desc": "Phân tích và giám định kỹ thuật âm thanh số dựa trên cơ chế Dual-Engine kết hợp mô hình xác suất hậu nghiệm, phục vụ điều tra các cuộc gọi nghi vấn mạo danh.",
         "badge_1_title": "Nhận diện Vocoder AI",
         "badge_1_desc": "Trích xuất 40 tham số âm học",
         "badge_2_title": "Phân tích kịch bản thao túng",
@@ -160,7 +155,7 @@ TEXTS = {
         "hero_tag": "FORENSIC SYSTEM",
         "hero_title_1": "Deepfake Call Investigation",
         "hero_title_2": "& Forensic System",
-        "hero_desc": "Digital audio forensic evaluation powered by a Dual-Engine architecture (85% Acoustics + 15% NLP) for investigating impersonation incidents.",
+        "hero_desc": "Digital audio forensic evaluation powered by a Dual-Engine architecture with posterior probability modeling for investigating impersonation incidents.",
         "badge_1_title": "Vocoder Identification",
         "badge_1_desc": "Extracts 40 acoustic dimensions",
         "badge_2_title": "Script Manipulation Audit",
@@ -187,9 +182,7 @@ TEXTS = {
 
 t = TEXTS[st.session_state["lang"]]
 
-# ==========================================
-# HEADER ĐIỀU HƯỚNG
-# ==========================================
+# Header
 col_logo, col_menu, col_lang = st.columns([2.6, 5.0, 2.4], vertical_alignment="center")
 
 with col_logo:
@@ -223,8 +216,8 @@ with col_menu:
 
 with col_lang:
     selected_lang = st.selectbox(
-        "Lang", 
-        ["Tiếng Việt", "English"], 
+        "Lang",
+        ["Tiếng Việt", "English"],
         index=0 if st.session_state["lang"] == "Tiếng Việt" else 1,
         label_visibility="collapsed"
     )
@@ -232,11 +225,8 @@ with col_lang:
         st.session_state["lang"] = selected_lang
         st.rerun()
 
-# ==========================================
 # TAB 1: TRANG CHỦ
-# ==========================================
 if st.session_state["active_tab"] == "Trang chủ":
-    # Hero Banner
     st.markdown(f"""
         <div class="hero-banner-full">
             <div class="hero-tag">{t["hero_tag"]}</div>
@@ -259,7 +249,6 @@ if st.session_state["active_tab"] == "Trang chủ":
         </div>
     """, unsafe_allow_html=True)
 
-    # Tiêu đề mục kiểm tra
     st.markdown(f"""
         <div class="section-title-container">
             <h2 class="section-title-text">{t["section_audio_title"]}</h2>
@@ -267,7 +256,6 @@ if st.session_state["active_tab"] == "Trang chủ":
         </div>
     """, unsafe_allow_html=True)
 
-    # Khung nạp tệp và cấu hình
     st.markdown('<div class="custom-card">', unsafe_allow_html=True)
     col_f1, col_f2 = st.columns([1.8, 1.2], gap="large")
 
@@ -293,11 +281,10 @@ if st.session_state["active_tab"] == "Trang chủ":
     else:
         btn_scan = False
 
-    # Xử lý phân tích kết quả & Lưu DB
     if btn_scan and uploaded_file is not None:
         st.markdown(f"<h3 style='margin: 30px 0 20px 0; color: #0f172a; font-weight: 800;'>{t['result_heading']}</h3>", unsafe_allow_html=True)
 
-        with st.spinner("Đang bóc tách 40 tham số âm học và quét ngữ nghĩa..."):
+        with st.spinner("Đang bóc tách 40 tham số âm học và quét ma trận ngữ nghĩa..."):
             result = run_pipeline(uploaded_file, is_mic=False)
 
         ts_now = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -332,17 +319,15 @@ if st.session_state["active_tab"] == "Trang chủ":
             ))
             conn.commit()
             conn.close()
-            st.toast("Da ghi nhan thanh cong vao co so du lieu nhat ky.")
+            st.toast("Đã ghi nhận thành công vào cơ sở dữ liệu nhật ký.")
         except Exception as e:
             st.error(f"Lỗi ghi database: {e}")
 
-        # Thẻ cảnh báo kết quả
         if score >= 70 or threat == "Danger":
             st.markdown(f'<div class="status-badge-high">{t["high_threat"]}</div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="status-badge-safe">{t["safe_threat"]}</div>', unsafe_allow_html=True)
 
-        # 3 Cột chỉ số chi tiết
         c_score, c_detail, c_status = st.columns([1.1, 1.3, 1.6], gap="medium")
 
         score_color = "#dc2626" if score >= 70 else ("#d97706" if score >= 40 else "#16a34a")
@@ -365,13 +350,13 @@ if st.session_state["active_tab"] == "Trang chủ":
                 <p style="color: #64748b; font-size: 0.85rem; font-weight: 700; text-transform: uppercase; margin-bottom: 12px;">Đo Lường Phân Tầng Dual-Engine</p>
                 <div style="margin-bottom: 12px;">
                     <div style="display: flex; justify-content: space-between; font-size: 0.9rem; font-weight: 700;">
-                        <span>Giả mạo Âm học (AI Voice - 85%):</span>
+                        <span>Giả mạo Âm học (AI Voice):</span>
                         <span style="color: #dc2626;">{p_acoustic}%</span>
                     </div>
                 </div>
                 <div>
                     <div style="display: flex; justify-content: space-between; font-size: 0.9rem; font-weight: 700;">
-                        <span>Kịch bản thao túng (NLP - 15%):</span>
+                        <span>Kịch bản thao túng (NLP):</span>
                         <span style="color: #7c3aed;">{p_nlp}%</span>
                     </div>
                 </div>
@@ -379,18 +364,23 @@ if st.session_state["active_tab"] == "Trang chủ":
             """, unsafe_allow_html=True)
 
         with c_status:
-            flags_html = " ".join([f'<span style="background:#fee2e2; color:#dc2626; padding:3px 10px; border-radius:4px; font-weight:700; font-size:0.85rem; margin-right:6px;">{kw}</span>' for kw in result.get("flags", [])]) if result.get("flags") else ""
-            desc_text = "Phát hiện các từ khóa mang tính đe dọa, phong tỏa hoặc giục chuyển tiền gấp." if result.get("flags") else "Không phát hiện từ khóa bất thường trong kịch bản đàm thoại."
-            
+            flags = result.get("flags", [])
+            flags_html = " ".join([f'<span style="background:#fee2e2; color:#dc2626; padding:3px 10px; border-radius:4px; font-weight:700; font-size:0.85rem; margin-right:6px; display:inline-block; margin-bottom:4px;">{kw}</span>' for kw in flags]) if flags else ""
+            desc_text = f"Phát hiện {len(flags)} dấu hiệu đe dọa / giục chuyển tiền / cấp cứu viện phí." if flags else "Không phát hiện từ khóa bất thường trong kịch bản đàm thoại."
+            transcript_text = result.get("transcript", "")
+
             st.markdown(f"""
             <div class="custom-card">
                 <p style="color: #64748b; font-size: 0.85rem; font-weight: 700; text-transform: uppercase; margin-bottom: 8px;">Dấu Hiệu Thao Túng Tâm Lý</p>
-                <div style="font-size: 0.92rem; color: #475569; line-height: 1.6;">{desc_text}</div>
-                <div style="margin-top: 10px;">{flags_html}</div>
+                <div style="font-size: 0.92rem; color: #475569; line-height: 1.5; margin-bottom: 8px;">{desc_text}</div>
+                <div style="margin-bottom: 12px;">{flags_html}</div>
+                <div style="background: #f8fafc; border-left: 3px solid #3b82f6; padding: 8px 12px; border-radius: 4px;">
+                    <span style="font-size: 0.78rem; font-weight: 700; color: #64748b; text-transform: uppercase;">Nội dung bóc băng (Whisper):</span>
+                    <p style="font-size: 0.88rem; color: #1e293b; margin: 4px 0 0 0; font-style: italic;">"{transcript_text}"</p>
+                </div>
             </div>
             """, unsafe_allow_html=True)
 
-        # Biểu đồ âm học & XAI
         col_g1, col_g2 = st.columns(2, gap="medium")
         with col_g1:
             st.markdown("##### Phổ Tần Số Âm Học (Mel-Spectrogram)")
@@ -401,7 +391,7 @@ if st.session_state["active_tab"] == "Trang chủ":
             if result.get("xai_fig") is not None:
                 st.pyplot(result["xai_fig"])
 
-    # Lịch sử giám định (Audit Log)
+    # Audit Log
     st.markdown(f"""
         <div class="section-title-container" style="margin-top: 50px;">
             <h2 class="section-title-text">{t["history_title"]}</h2>
@@ -452,9 +442,7 @@ if st.session_state["active_tab"] == "Trang chủ":
                     st.download_button("Xuất biên bản (.txt)", rep_txt, file_name=f"Report_{r_id}.txt", key=f"dl_{r_id}", use_container_width=True)
                 st.write("")
 
-# ==========================================
 # TAB 2: HƯỚNG DẪN
-# ==========================================
 elif st.session_state["active_tab"] == "Hướng dẫn":
     st.markdown('<div style="margin-top: 80px;">', unsafe_allow_html=True)
     st.markdown(f"""
@@ -473,7 +461,7 @@ elif st.session_state["active_tab"] == "Hướng dẫn":
             </div>
             <div class="custom-card">
                 <h4 style="color: #1e3a8a; font-weight: 800;">Bước 2: Phân tích phân tầng Dual-Engine</h4>
-                <p style="color: #475569; line-height: 1.6;">Hệ thống đồng thời bóc tách <b>40 tham số âm học (85%)</b> để phát hiện dấu vết Vocoder AI và bóc băng <b>Whisper NLP (15%)</b> để nhận diện kịch bản lừa đảo.</p>
+                <p style="color: #475569; line-height: 1.6;">Hệ thống đồng thời bóc tách <b>40 tham số âm học</b> để phát hiện dấu vết Vocoder AI và bóc băng <b>Whisper NLP</b> để nhận diện kịch bản lừa đảo.</p>
             </div>
         """, unsafe_allow_html=True)
 
@@ -494,9 +482,7 @@ elif st.session_state["active_tab"] == "Hướng dẫn":
         """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ==========================================
 # TAB 3: ĐĂNG NHẬP / ĐĂNG KÝ
-# ==========================================
 elif st.session_state["active_tab"] == "Đăng nhập / Đăng ký":
     st.markdown('<div style="margin-top: 80px;">', unsafe_allow_html=True)
     col_a1, col_a2, col_a3 = st.columns([1.5, 3.2, 1.5])
