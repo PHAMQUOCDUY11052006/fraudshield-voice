@@ -104,7 +104,6 @@ def get_scans(username=None, is_admin=False):
     except Exception:
         return []
 
-# Hàm nghiệp vụ quản lý tài khoản cho Admin
 def get_all_users():
     conn = sqlite3.connect("forensic_admin.db")
     c = conn.cursor()
@@ -433,17 +432,13 @@ if st.session_state["active_tab"] == "Trang chủ":
             flags = result.get("flags", [])
             flags_html = " ".join([f'<span style="background:#fee2e2; color:#dc2626; padding:3px 10px; border-radius:4px; font-weight:700; font-size:0.85rem; margin-right:6px; display:inline-block; margin-bottom:4px;">{kw}</span>' for kw in flags]) if flags else ""
             desc_text = f"Phát hiện {len(flags)} dấu hiệu đe dọa / giục chuyển tiền / cấp cứu viện phí." if flags else "Không phát hiện từ khóa bất thường trong kịch bản đàm thoại."
-            transcript_text = result.get("transcript", "")
 
+            # Đã loại bỏ khung bóc băng văn bản của Whisper
             st.markdown(f"""
             <div class="custom-card">
                 <p style="color: #64748b; font-size: 0.85rem; font-weight: 700; text-transform: uppercase; margin-bottom: 8px;">Dấu Hiệu Thao Túng Tâm Lý</p>
-                <div style="font-size: 0.92rem; color: #475569; line-height: 1.5; margin-bottom: 8px;">{desc_text}</div>
-                <div style="margin-bottom: 12px;">{flags_html}</div>
-                <div style="background: #f8fafc; border-left: 3px solid #3b82f6; padding: 8px 12px; border-radius: 4px;">
-                    <span style="font-size: 0.78rem; font-weight: 700; color: #64748b; text-transform: uppercase;">Nội dung bóc băng (Whisper):</span>
-                    <p style="font-size: 0.88rem; color: #1e293b; margin: 4px 0 0 0; font-style: italic;">"{transcript_text}"</p>
-                </div>
+                <div style="font-size: 0.92rem; color: #475569; line-height: 1.5; margin-bottom: 12px;">{desc_text}</div>
+                <div>{flags_html}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -537,11 +532,9 @@ elif st.session_state["active_tab"] == "Tài khoản":
                     else:
                         st.warning("Vui lòng điền đầy đủ các thông tin.")
     else:
-        # GIAO DIỆN KHI ĐÃ ĐĂNG NHẬP
         is_admin = (st.session_state["role"] == "admin")
         username = st.session_state["username"]
 
-        # Card thông tin người dùng & Đăng xuất
         c_u1, c_u2 = st.columns([3.5, 1.2], vertical_alignment="center")
         with c_u1:
             role_text = '<span style="color: #dc2626; font-weight:800;">QUẢN TRỊ VIÊN HỆ THỐNG (ADMIN)</span>' if is_admin else '<span style="color: #2563eb; font-weight:800;">ĐIỀU TRA VIÊN (USER)</span>'
@@ -560,9 +553,7 @@ elif st.session_state["active_tab"] == "Tài khoản":
 
         st.markdown("---")
 
-        # -------------------------------------------------------------
-        # KHU VỰC DÀNH RIÊNG CHO ADMIN: QUẢN LÝ CÁC TÀI KHOẢN
-        # -------------------------------------------------------------
+        # Quản lý tài khoản cho Admin
         if is_admin:
             st.markdown("""
                 <div class="section-title-container">
@@ -581,7 +572,6 @@ elif st.session_state["active_tab"] == "Tài khoản":
                     st.markdown(f"<b>{u_full}</b> (@{u_name}) - <i>{u_agency}</i> | {badge_role}", unsafe_allow_html=True)
                 
                 with c_action1:
-                    # Nút đổi quyền
                     btn_label = "Hạ xuống User" if u_role == "admin" else "Nâng lên Admin"
                     if u_name in ["duy", "hien"]:
                         st.button(btn_label, key=f"role_{u_id}", disabled=True, use_container_width=True)
@@ -592,7 +582,6 @@ elif st.session_state["active_tab"] == "Tài khoản":
                             st.rerun()
 
                 with c_action2:
-                    # Nút xóa tài khoản (chặn xóa tài khoản admin gốc)
                     if u_name in ["duy", "hien"]:
                         st.button("Khóa", key=f"del_{u_id}", disabled=True, use_container_width=True)
                     else:
@@ -603,9 +592,7 @@ elif st.session_state["active_tab"] == "Tài khoản":
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-        # -------------------------------------------------------------
-        # NHẬT KÝ CÁC PHIÊN GIÁM ĐỊNH (AUDIT LOG) NẰM TRONG TÀI KHOẢN
-        # -------------------------------------------------------------
+        # Nhật ký các phiên giám định (Audit Log)
         st.markdown(f"""
             <div class="section-title-container">
                 <h3 class="section-title-text">{t["history_title"]}</h3>
